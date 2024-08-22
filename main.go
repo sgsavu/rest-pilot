@@ -31,6 +31,14 @@ type Response struct {
 	Body       map[string]interface{} `json:"body"`
 }
 
+type LogEntry struct {
+	TestName     string `json:"test_name"`
+	Status       string `json:"status"`
+	Detail       string `json:"detail"`
+	Duration     string `json:"duration"`
+	ResponseCode int    `json:"response_code"`
+}
+
 func loadTests(filename string) ([]Test, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -46,7 +54,9 @@ func loadTests(filename string) ([]Test, error) {
 	return tests, nil
 }
 
-func runTest(test Test) bool {
+func runTest(test Test) LogEntry {
+	start := time.Now()
+
 	timeout := time.Duration(test.Timeout) * time.Second
 	if timeout == 0 {
 		timeout = 10 * time.Second
@@ -58,8 +68,12 @@ func runTest(test Test) bool {
 
 	req, err := http.NewRequest(test.Request.Method, test.Request.URL, nil)
 	if err != nil {
-		fmt.Printf("Test %s failed: %v\n", test.Name, err)
-		return false
+		return LogEntry{
+			TestName: test.Name,
+			Status:   "FAILED",
+			Detail:   fmt.Sprintf("Failed to create request: %v", err),
+			Duration: time.Since(start).String(),
+		}
 	}
 
 	for key, value := range test.Request.Headers {
@@ -68,29 +82,47 @@ func runTest(test Test) bool {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("Test %s failed: %v\n", test.Name, err)
-		return false
+		return LogEntry{
+			TestName: test.Name,
+			Status:   "FAILED",
+			Detail:   fmt.Sprintf("Failed to send request: %v", err),
+			Duration: time.Since(start).String(),
+		}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != test.Response.StatusCode {
-		fmt.Printf("Test %s failed: expected status %d, got %d\n", test.Name, test.Response.StatusCode, resp.StatusCode)
-		return false
+		return LogEntry{
+			TestName:     test.Name,
+			Status:       "FAILED",
+			Detail:       fmt.Sprintf("Expected status %d, got %d", test.Response.StatusCode, resp.StatusCode),
+			Duration:     time.Since(start).String(),
+			ResponseCode: resp.StatusCode,
+		}
 	}
 
 	for key, expectedValue := range test.Response.Headers {
 		actualValue := resp.Header.Get(key)
 		if actualValue != expectedValue {
-			fmt.Printf("Test %s failed: expected header %s: %s, got %s\n", test.Name, key, expectedValue, actualValue)
-			return false
+			return LogEntry{
+				TestName: test.Name,
+				Status:   "FAILED",
+				Detail:   fmt.Sprintf("Expected header %s: %s, got %s", key, expectedValue, actualValue),
+				Duration: time.Since(start).String(),
+			}
 		}
 	}
 
-	fmt.Printf("Test %s passed\n", test.Name)
-	return true
+	return LogEntry{
+		TestName:     test.Name,
+		Status:       "PASSED",
+		Detail:       "Test passed successfully",
+		Duration:     time.Since(start).String(),
+		ResponseCode: resp.StatusCode,
+	}
 }
 
-func worker(tests <-chan Test, results chan<- bool, wg *sync.WaitGroup) {
+func worker(tests <-chan Test, results chan<- LogEntry, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for test := range tests {
 		results <- runTest(test)
@@ -123,6 +155,7 @@ func loadTestsFromDir(dirname string) ([]Test, error) {
 
 func main() {
 	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
+	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
 	flag.Parse()
 
 	if len(flag.Args()) < 1 {
@@ -159,7 +192,7 @@ func main() {
 
 	numWorkers := *workersFlag
 	testsChan := make(chan Test, len(tests))
-	resultsChan := make(chan bool, len(tests))
+	resultsChan := make(chan LogEntry, len(tests))
 
 	var wg sync.WaitGroup
 
@@ -176,9 +209,12 @@ func main() {
 	wg.Wait()
 	close(resultsChan)
 
-	allPassed := true
+	var allPassed bool = true
+	var logEntries []LogEntry
+
 	for result := range resultsChan {
-		if !result {
+		logEntries = append(logEntries, result)
+		if result.Status != "PASSED" {
 			allPassed = false
 		}
 	}
@@ -187,6 +223,19 @@ func main() {
 		fmt.Println("All tests passed")
 	} else {
 		fmt.Println("Some tests failed")
+	}
+
+	reportData, err := json.MarshalIndent(logEntries, "", "  ")
+	if err != nil {
+		fmt.Printf("Failed to generate report: %v\n", err)
 		os.Exit(1)
 	}
+
+	err = os.WriteFile(*outputFlag, reportData, 0644)
+	if err != nil {
+		fmt.Printf("Failed to write report: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Test report written to %s\n", *outputFlag)
 }

@@ -1,0 +1,9 @@
+[
+  {
+    "test_name": "Get User with Timeout",
+    "status": "PASSED",
+    "detail": "Test passed successfully",
+    "duration": "53.765041ms",
+    "response_code": 200
+  }
+]
