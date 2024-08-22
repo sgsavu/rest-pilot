@@ -11,7 +11,7 @@ This is a Go-based test runner for running HTTP tests defined in JSON files.
 
 ### Requirements
 
-* Go 1.20 or later
+* Go 1.22.5 or later
 * Network access to the target host and port
 
 ### Installation
@@ -41,10 +41,11 @@ go build -o rest-pilot
 | Option  | Default | Description                                              |
 |---------|---------|-----------------------------------------------------------|
 | -target  | .       | Path to the directory or file containing test files.      |
-| -workers | 5       | Number of concurrent workers to use for running tests.     |
-| -host    | localhost | Host where the tests will be executed.                  |
+| -workers | 1       | Number of concurrent workers to use for running tests.     |
+| -host    | 127.0.0.1 | Host where the tests will be executed.                  |
 | -port    | 3000    | Port where the tests will be executed.                  |
 | -output  | test_report.json | Path to the output file for the test report.              |
+| -no-output  | false | If enabled does not produce the test report.              |
 
 **Running Tests**
 
@@ -56,6 +57,7 @@ Test files should be JSON files ending with `.test.json` and follow this structu
 [
   {
     "name": "Test 1",
+    "timeout": 5,
     "request": {
       "method": "GET",
       "path": "/endpoint",
