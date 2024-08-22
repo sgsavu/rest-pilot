@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,7 +15,7 @@ type Test struct {
 	Name     string   `json:"name"`
 	Request  Request  `json:"request"`
 	Response Response `json:"response"`
-	Timeout  int      `json:"timeout,omitempty"` // Timeout in seconds, applies to the whole test
+	Timeout  int      `json:"timeout,omitempty"`
 }
 
 type Request struct {
@@ -121,12 +122,15 @@ func loadTestsFromDir(dirname string) ([]Test, error) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
+	flag.Parse()
+
+	if len(flag.Args()) < 1 {
 		fmt.Println("Please provide the path to a test file or directory containing test files")
 		os.Exit(1)
 	}
 
-	path := os.Args[1]
+	path := flag.Args()[0]
 
 	var tests []Test
 	var err error
@@ -153,7 +157,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	numWorkers := 5
+	numWorkers := *workersFlag
 	testsChan := make(chan Test, len(tests))
 	resultsChan := make(chan bool, len(tests))
 
