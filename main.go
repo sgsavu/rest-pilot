@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 )
 
 type Test struct {
@@ -77,6 +78,13 @@ func runTest(test Test) bool {
 	return true
 }
 
+func worker(tests <-chan Test, results chan<- bool, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for test := range tests {
+		results <- runTest(test)
+	}
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Please provide the path to the test file")
@@ -90,10 +98,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	allPassed := true
+	numWorkers := 5
+	testsChan := make(chan Test, len(tests))
+	resultsChan := make(chan bool, len(tests))
+
+	var wg sync.WaitGroup
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go worker(testsChan, resultsChan, &wg)
+	}
+
 	for _, test := range tests {
-		passed := runTest(test)
-		if !passed {
+		testsChan <- test
+	}
+	close(testsChan)
+
+	wg.Wait()
+	close(resultsChan)
+
+	allPassed := true
+	for result := range resultsChan {
+		if !result {
 			allPassed = false
 		}
 	}
