@@ -11,7 +11,7 @@ This is a Go-based test runner for running HTTP tests defined in JSON files.
 
 ### Requirements
 
-* Go 1.18 or later
+* Go 1.20 or later
 * Network access to the target host and port
 
 ### Installation
