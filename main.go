@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -85,16 +86,60 @@ func worker(tests <-chan Test, results chan<- bool, wg *sync.WaitGroup) {
 	}
 }
 
+func loadTestsFromDir(dirname string) ([]Test, error) {
+	var allTests []Test
+
+	err := filepath.Walk(dirname, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && (filepath.Ext(path) == ".json") {
+			tests, err := loadTests(path)
+			if err != nil {
+				return err
+			}
+			allTests = append(allTests, tests...)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return allTests, nil
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Please provide the path to the test file")
+		fmt.Println("Please provide the path to a test file or directory containing test files")
 		os.Exit(1)
 	}
 
-	testFile := os.Args[1]
-	tests, err := loadTests(testFile)
+	path := os.Args[1]
+
+	var tests []Test
+	var err error
+
+	info, err := os.Stat(path)
+	if err != nil {
+		fmt.Printf("Error accessing path: %v\n", err)
+		os.Exit(1)
+	}
+
+	if info.IsDir() {
+		tests, err = loadTestsFromDir(path)
+	} else {
+		tests, err = loadTests(path)
+	}
+
 	if err != nil {
 		fmt.Printf("Error loading tests: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(tests) == 0 {
+		fmt.Println("No tests found")
 		os.Exit(1)
 	}
 
