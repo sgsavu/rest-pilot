@@ -202,14 +202,13 @@ func worker(tests <-chan Test, results chan<- LogEntry, wg *sync.WaitGroup, host
 	}
 }
 
-func loadTestsFromDir(dirname string) ([]Test, error) {
+func scanForTestFiles(rootDir string) ([]Test, error) {
 	var allTests []Test
-
-	err := filepath.Walk(dirname, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && (filepath.Ext(path) == ".json") {
+		if !info.IsDir() && filepath.Ext(path) == ".json" && filepath.Base(path)[len(filepath.Base(path))-10:] == ".test.json" {
 			tests, err := loadTests(path)
 			if err != nil {
 				return err
@@ -218,50 +217,45 @@ func loadTestsFromDir(dirname string) ([]Test, error) {
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
-
 	return allTests, nil
 }
 
 func main() {
+	target := flag.String("target", ".", "Target file/directory in which tests are found")
 	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
 	hostFlag := flag.String("host", "localhost", "Host to use for the tests")
 	portFlag := flag.Int("port", 3000, "Port to use for the tests")
 	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
 	flag.Parse()
 
-	if len(flag.Args()) < 1 {
-		fmt.Println("Please provide the path to a test file or directory containing test files")
-		os.Exit(1)
-	}
-
-	path := flag.Args()[0]
-
 	var tests []Test
 	var err error
 
-	info, err := os.Stat(path)
+	info, err := os.Stat(*target)
 	if err != nil {
 		fmt.Printf("Error accessing path: %v\n", err)
 		os.Exit(1)
 	}
 
 	if info.IsDir() {
-		tests, err = loadTestsFromDir(path)
+		tests, err = scanForTestFiles(*target)
+		if err != nil {
+			fmt.Printf("Error scanning for test files: %v\n", err)
+			os.Exit(1)
+		}
 	} else {
-		tests, err = loadTests(path)
-	}
-
-	if err != nil {
-		fmt.Printf("Error loading tests: %v\n", err)
-		os.Exit(1)
+		tests, err = loadTests(*target)
+		if err != nil {
+			fmt.Printf("Error loading tests: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if len(tests) == 0 {
-		fmt.Println("No tests found")
+		fmt.Println("No tests found", *target)
 		os.Exit(1)
 	}
 
