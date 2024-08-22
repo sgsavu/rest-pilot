@@ -20,7 +20,7 @@ type Test struct {
 
 type Request struct {
 	Method  string            `json:"method"`
-	URL     string            `json:"url"`
+	Path    string            `json:"path"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body,omitempty"`
 }
@@ -54,7 +54,7 @@ func loadTests(filename string) ([]Test, error) {
 	return tests, nil
 }
 
-func runTest(test Test) LogEntry {
+func runTest(test Test, host string, port int) LogEntry {
 	start := time.Now()
 
 	timeout := time.Duration(test.Timeout) * time.Second
@@ -66,7 +66,9 @@ func runTest(test Test) LogEntry {
 		Timeout: timeout,
 	}
 
-	req, err := http.NewRequest(test.Request.Method, test.Request.URL, nil)
+	fullURL := fmt.Sprintf("http://%s:%d%s", host, port, test.Request.Path)
+
+	req, err := http.NewRequest(test.Request.Method, fullURL, nil)
 	if err != nil {
 		return LogEntry{
 			TestName: test.Name,
@@ -122,10 +124,10 @@ func runTest(test Test) LogEntry {
 	}
 }
 
-func worker(tests <-chan Test, results chan<- LogEntry, wg *sync.WaitGroup) {
+func worker(tests <-chan Test, results chan<- LogEntry, wg *sync.WaitGroup, host string, port int) {
 	defer wg.Done()
 	for test := range tests {
-		results <- runTest(test)
+		results <- runTest(test, host, port)
 	}
 }
 
@@ -155,6 +157,8 @@ func loadTestsFromDir(dirname string) ([]Test, error) {
 
 func main() {
 	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
+	hostFlag := flag.String("host", "localhost", "Host to use for the tests")
+	portFlag := flag.Int("port", 80, "Port to use for the tests")
 	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
 	flag.Parse()
 
@@ -191,6 +195,8 @@ func main() {
 	}
 
 	numWorkers := *workersFlag
+	host := *hostFlag
+	port := *portFlag
 	testsChan := make(chan Test, len(tests))
 	resultsChan := make(chan LogEntry, len(tests))
 
@@ -198,7 +204,7 @@ func main() {
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go worker(testsChan, resultsChan, &wg)
+		go worker(testsChan, resultsChan, &wg, host, port)
 	}
 
 	for _, test := range tests {
