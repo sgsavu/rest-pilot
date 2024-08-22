@@ -12,7 +12,7 @@ import (
 func main() {
 	target := flag.String("target", ".", "Target file/directory in which tests are found")
 	workersFlag := flag.Int("workers", 1, "Number of concurrent workers")
-	hostFlag := flag.String("host", "localhost", "Host to use for the tests")
+	hostFlag := flag.String("host", "127.0.0.1", "Host to use for the tests")
 	portFlag := flag.Int("port", 3000, "Port to use for the tests")
 	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
 	noOutputFlag := flag.Bool("no-output", false, "If enabled does not produce the test report.")
