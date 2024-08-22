@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 type Test struct {
 	Name     string   `json:"name"`
 	Request  Request  `json:"request"`
 	Response Response `json:"response"`
+	Timeout  int      `json:"timeout,omitempty"` // Timeout in seconds, applies to the whole test
 }
 
 type Request struct {
@@ -44,6 +46,15 @@ func loadTests(filename string) ([]Test, error) {
 }
 
 func runTest(test Test) bool {
+	timeout := time.Duration(test.Timeout) * time.Second
+	if timeout == 0 {
+		timeout = 10 * time.Second
+	}
+
+	client := &http.Client{
+		Timeout: timeout,
+	}
+
 	req, err := http.NewRequest(test.Request.Method, test.Request.URL, nil)
 	if err != nil {
 		fmt.Printf("Test %s failed: %v\n", test.Name, err)
@@ -54,7 +65,6 @@ func runTest(test Test) bool {
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
 		fmt.Printf("Test %s failed: %v\n", test.Name, err)

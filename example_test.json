@@ -1,6 +1,7 @@
 [
     {
-        "name": "Get User",
+        "name": "Get User with Timeout",
+        "timeout": 5,
         "request": {
             "method": "GET",
             "url": "https://jsonplaceholder.typicode.com/users/1",
