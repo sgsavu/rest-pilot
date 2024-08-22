@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -19,10 +22,10 @@ type Test struct {
 }
 
 type Request struct {
-	Method  string            `json:"method"`
-	Path    string            `json:"path"`
-	Headers map[string]string `json:"headers"`
-	Body    string            `json:"body,omitempty"`
+	Method  string                 `json:"method"`
+	Path    string                 `json:"path"`
+	Headers map[string]string      `json:"headers"`
+	Body    map[string]interface{} `json:"body,omitempty"`
 }
 
 type Response struct {
@@ -32,11 +35,15 @@ type Response struct {
 }
 
 type LogEntry struct {
-	TestName     string `json:"test_name"`
-	Status       string `json:"status"`
-	Detail       string `json:"detail"`
-	Duration     string `json:"duration"`
-	ResponseCode int    `json:"response_code"`
+	TestName     string                 `json:"test_name"`
+	Status       string                 `json:"status"`
+	Detail       string                 `json:"detail"`
+	Duration     string                 `json:"duration"`
+	RequestURL   string                 `json:"request_url,omitempty"`
+	ResponseCode int                    `json:"response_code,omitempty"`
+	ResponseBody map[string]interface{} `json:"response_body,omitempty"`
+	Expected     any                    `json:"expected,omitempty"`
+	Received     any                    `json:"received,omitempty"`
 }
 
 func loadTests(filename string) ([]Test, error) {
@@ -54,12 +61,14 @@ func loadTests(filename string) ([]Test, error) {
 	return tests, nil
 }
 
+const DEFAULT_TEST_TIMEOUT = 10 * time.Second
+
 func runTest(test Test, host string, port int) LogEntry {
 	start := time.Now()
 
 	timeout := time.Duration(test.Timeout) * time.Second
 	if timeout == 0 {
-		timeout = 10 * time.Second
+		timeout = DEFAULT_TEST_TIMEOUT
 	}
 
 	client := &http.Client{
@@ -68,13 +77,29 @@ func runTest(test Test, host string, port int) LogEntry {
 
 	fullURL := fmt.Sprintf("http://%s:%d%s", host, port, test.Request.Path)
 
-	req, err := http.NewRequest(test.Request.Method, fullURL, nil)
+	var requestBody *bytes.Buffer
+	if test.Request.Body != nil {
+		serialisedBody, err := json.Marshal(test.Request.Body)
+		if err != nil {
+			return LogEntry{
+				TestName:   test.Name,
+				Status:     "FAILED",
+				Detail:     fmt.Sprintf("Failed to create request body: %v", err),
+				Duration:   time.Since(start).String(),
+				RequestURL: fullURL,
+			}
+		}
+		requestBody = bytes.NewBuffer(serialisedBody)
+	}
+
+	req, err := http.NewRequest(test.Request.Method, fullURL, requestBody)
 	if err != nil {
 		return LogEntry{
-			TestName: test.Name,
-			Status:   "FAILED",
-			Detail:   fmt.Sprintf("Failed to create request: %v", err),
-			Duration: time.Since(start).String(),
+			TestName:   test.Name,
+			Status:     "FAILED",
+			Detail:     fmt.Sprintf("Failed to create request: %v", err),
+			Duration:   time.Since(start).String(),
+			RequestURL: fullURL,
 		}
 	}
 
@@ -85,21 +110,49 @@ func runTest(test Test, host string, port int) LogEntry {
 	resp, err := client.Do(req)
 	if err != nil {
 		return LogEntry{
-			TestName: test.Name,
-			Status:   "FAILED",
-			Detail:   fmt.Sprintf("Failed to send request: %v", err),
-			Duration: time.Since(start).String(),
+			TestName:   test.Name,
+			Status:     "FAILED",
+			Detail:     fmt.Sprintf("Failed to send request: %v", err),
+			Duration:   time.Since(start).String(),
+			RequestURL: fullURL,
 		}
 	}
 	defer resp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return LogEntry{
+			TestName:     test.Name,
+			Status:       "FAILED",
+			Detail:       fmt.Sprintf("Failed to read response body bytes: %v", err),
+			Duration:     time.Since(start).String(),
+			RequestURL:   fullURL,
+			ResponseCode: resp.StatusCode,
+		}
+	}
+
+	var respBody map[string]interface{}
+	err = json.Unmarshal(respBodyBytes, &respBody)
+	if err != nil {
+		return LogEntry{
+			TestName:     test.Name,
+			Status:       "FAILED",
+			Detail:       fmt.Sprintf("Failed to deserialise resp body: %v - %s", err, string(respBodyBytes)),
+			Duration:     time.Since(start).String(),
+			RequestURL:   fullURL,
+			ResponseCode: resp.StatusCode,
+		}
+	}
 
 	if resp.StatusCode != test.Response.StatusCode {
 		return LogEntry{
 			TestName:     test.Name,
 			Status:       "FAILED",
-			Detail:       fmt.Sprintf("Expected status %d, got %d", test.Response.StatusCode, resp.StatusCode),
+			Detail:       fmt.Sprintf("Expected status %d, got %d:", test.Response.StatusCode, resp.StatusCode),
 			Duration:     time.Since(start).String(),
+			RequestURL:   fullURL,
 			ResponseCode: resp.StatusCode,
+			ResponseBody: respBody,
 		}
 	}
 
@@ -107,11 +160,27 @@ func runTest(test Test, host string, port int) LogEntry {
 		actualValue := resp.Header.Get(key)
 		if actualValue != expectedValue {
 			return LogEntry{
-				TestName: test.Name,
-				Status:   "FAILED",
-				Detail:   fmt.Sprintf("Expected header %s: %s, got %s", key, expectedValue, actualValue),
-				Duration: time.Since(start).String(),
+				TestName:     test.Name,
+				Status:       "FAILED",
+				Detail:       fmt.Sprintf("Expected header %s: %s, got %s", key, expectedValue, actualValue),
+				Duration:     time.Since(start).String(),
+				RequestURL:   fullURL,
+				ResponseCode: resp.StatusCode,
+				ResponseBody: respBody,
 			}
+		}
+	}
+
+	if !reflect.DeepEqual(test.Response.Body, respBody) {
+		return LogEntry{
+			TestName:     test.Name,
+			Status:       "FAILED",
+			Detail:       "Body mismatch",
+			Duration:     time.Since(start).String(),
+			RequestURL:   fullURL,
+			ResponseCode: resp.StatusCode,
+			Expected:     test.Response.Body,
+			Received:     respBody,
 		}
 	}
 
@@ -120,7 +189,9 @@ func runTest(test Test, host string, port int) LogEntry {
 		Status:       "PASSED",
 		Detail:       "Test passed successfully",
 		Duration:     time.Since(start).String(),
+		RequestURL:   fullURL,
 		ResponseCode: resp.StatusCode,
+		ResponseBody: respBody,
 	}
 }
 
@@ -158,7 +229,7 @@ func loadTestsFromDir(dirname string) ([]Test, error) {
 func main() {
 	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
 	hostFlag := flag.String("host", "localhost", "Host to use for the tests")
-	portFlag := flag.Int("port", 80, "Port to use for the tests")
+	portFlag := flag.Int("port", 3000, "Port to use for the tests")
 	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
 	flag.Parse()
 
@@ -215,21 +286,20 @@ func main() {
 	wg.Wait()
 	close(resultsChan)
 
-	var allPassed bool = true
+	var failedTests = 0
 	var logEntries []LogEntry
 
 	for result := range resultsChan {
 		logEntries = append(logEntries, result)
 		if result.Status != "PASSED" {
-			allPassed = false
+			failedTests += 1
+			fmt.Printf("❌ %s \n", result.TestName)
+		} else {
+			fmt.Printf("✅ %s \n", result.TestName)
 		}
 	}
 
-	if allPassed {
-		fmt.Println("All tests passed")
-	} else {
-		fmt.Println("Some tests failed")
-	}
+	fmt.Printf("Finished %d tests: %d passed, %d failed\n", len(tests), len(tests)-failedTests, failedTests)
 
 	reportData, err := json.MarshalIndent(logEntries, "", "  ")
 	if err != nil {
