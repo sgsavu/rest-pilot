@@ -11,10 +11,11 @@ import (
 
 func main() {
 	target := flag.String("target", ".", "Target file/directory in which tests are found")
-	workersFlag := flag.Int("workers", 5, "Number of concurrent workers")
+	workersFlag := flag.Int("workers", 1, "Number of concurrent workers")
 	hostFlag := flag.String("host", "localhost", "Host to use for the tests")
 	portFlag := flag.Int("port", 3000, "Port to use for the tests")
 	outputFlag := flag.String("output", "test_report.json", "Output file for the test report")
+	noOutputFlag := flag.Bool("no-output", false, "If enabled does not produce the test report.")
 	flag.Parse()
 
 	var testFiles []TestFile
@@ -98,19 +99,27 @@ func main() {
 
 	fmt.Printf("\nTest files: %d failed | %d passed (%d total)\n", failedTestFiles, len(testFiles)-failedTestFiles, len(testFiles))
 	fmt.Printf("     Tests: %d failed | %d passed (%d total)\n", failedTests, totalTests-failedTests, totalTests)
-	fmt.Printf("      Time: %s\n", totalDuration.String())
+	fmt.Printf("      Time: %s\n\n", totalDuration.String())
 
-	reportData, err := json.MarshalIndent(fileResults, "", "  ")
-	if err != nil {
-		fmt.Printf("Failed to generate report: %v\n", err)
-		os.Exit(1)
+	if !*noOutputFlag {
+		reportData, err := json.MarshalIndent(fileResults, "", "  ")
+		if err != nil {
+			fmt.Printf("Failed to generate report: %v\n", err)
+			os.Exit(1)
+		}
+
+		err = os.WriteFile(*outputFlag, reportData, 0644)
+		if err != nil {
+			fmt.Printf("Failed to write report: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Test report written to %s\n\n", *outputFlag)
 	}
 
-	err = os.WriteFile(*outputFlag, reportData, 0644)
-	if err != nil {
-		fmt.Printf("Failed to write report: %v\n", err)
+	if failedTestFiles > 0 {
 		os.Exit(1)
+	} else {
+		os.Exit(0)
 	}
-
-	fmt.Printf("\nTest report written to %s\n\n", *outputFlag)
 }
