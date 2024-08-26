@@ -25,7 +25,7 @@ func runTest(test Test, host string, port int) TestResult {
 
 	fullURL := fmt.Sprintf("http://%s:%d%s", host, port, test.Request.Path)
 
-	var requestBody *bytes.Buffer
+	var requestBody io.Reader
 	if test.Request.Body != nil {
 		serialisedBody, err := json.Marshal(test.Request.Body)
 		if err != nil {
@@ -116,8 +116,8 @@ func runTest(test Test, host string, port int) TestResult {
 				RequestURL:   fullURL,
 				ResponseCode: resp.StatusCode,
 				ResponseBody: respBody,
-				Expected:     expectedValue,
-				Received:     actualValue,
+				Expected:     map[string]string{key: expectedValue},
+				Received:     map[string]string{key: actualValue},
 			}
 		}
 	}
